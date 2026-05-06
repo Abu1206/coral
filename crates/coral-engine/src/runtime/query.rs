@@ -20,6 +20,7 @@ use crate::runtime::registry::{
     CompiledQuerySource, SourceRegistrationCandidate, SourceRegistrationFailure, register_sources,
 };
 use crate::runtime::source_functions::SourceFunctionRegistry;
+use crate::runtime::statistics::{RuntimeStatisticsContext, StatisticsObservationSink};
 use crate::{
     CatalogInfo, CoreError, QueryExecution, QueryPlan, QueryResultObserver,
     QueryResultObserverError, QueryRuntimeConfig, QuerySource, TableFunctionInfo, TableInfo,
@@ -31,6 +32,7 @@ pub(crate) struct QueryRuntimeAdapter {
     table_functions: Vec<TableFunctionInfo>,
     failures: Vec<SourceRegistrationFailure>,
     query_result_observers: Vec<Arc<dyn QueryResultObserver>>,
+    statistics_sink: StatisticsObservationSink,
 }
 
 pub(crate) async fn build_runtime(
@@ -72,6 +74,8 @@ pub(crate) async fn build_runtime(
         mut extensions,
         statistics,
     } = runtime;
+    let statistics_sink = StatisticsObservationSink::default();
+    let statistics_context = RuntimeStatisticsContext::new(statistics_sink.clone());
     let mut source_candidates = Vec::new();
     for source in sources {
         match compile_query_source(source, &runtime_context, &extensions.request_authenticators) {
@@ -93,6 +97,7 @@ pub(crate) async fn build_runtime(
         &ctx,
         source_candidates,
         extensions.source_decorators.as_mut_slice(),
+        &statistics_context,
     )
     .await?;
     catalog::register(&ctx, &registration.active_sources, &statistics)
@@ -123,6 +128,7 @@ pub(crate) async fn build_runtime(
         table_functions,
         failures: registration.failures,
         query_result_observers: extensions.query_result_observers,
+        statistics_sink,
     })
 }
 
@@ -170,14 +176,26 @@ impl QueryRuntimeAdapter {
     }
 
     pub(crate) async fn execute_sql(&self, sql: &str) -> Result<QueryExecution, CoreError> {
+        let _ = self.statistics_sink.drain();
         let df = self.sql_dataframe(sql).await?;
         let arrow_schema = Arc::new(df.schema().as_arrow().clone());
-        let batches = df
-            .collect()
-            .await
-            .map_err(|err| datafusion_to_core(&err, &self.tables))?;
-        self.observe_query_result(sql, arrow_schema.as_ref(), &batches)?;
-        Ok(QueryExecution::new(arrow_schema, batches))
+        match df.collect().await {
+            Ok(batches) => {
+                let observer_result =
+                    self.observe_query_result(sql, arrow_schema.as_ref(), &batches);
+                let observations = self.statistics_sink.drain();
+                observer_result?;
+                Ok(QueryExecution::new_with_observations(
+                    arrow_schema,
+                    batches,
+                    observations,
+                ))
+            }
+            Err(err) => {
+                let _ = self.statistics_sink.drain();
+                Err(datafusion_to_core(&err, &self.tables))
+            }
+        }
     }
 
     fn observe_query_result(

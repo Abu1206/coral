@@ -16,6 +16,7 @@ use crate::backends::{
     build_registered_table_function, internal_table_function_name, registered_columns_from_specs,
     required_filter_names,
 };
+use crate::runtime::statistics::RuntimeStatisticsContext;
 use coral_spec::backends::http::{HttpSourceManifest, HttpTableSpec};
 pub(crate) mod auth;
 pub(crate) mod client;
@@ -73,7 +74,11 @@ impl CompiledBackendSource for HttpCompiledSource {
         &self.manifest.common.name
     }
 
-    async fn register(&self, _ctx: &SessionContext) -> Result<BackendRegistration> {
+    async fn register(
+        &self,
+        _ctx: &SessionContext,
+        statistics: &RuntimeStatisticsContext,
+    ) -> Result<BackendRegistration> {
         let backend = HttpSourceClient::from_manifest(
             &self.manifest,
             &self.source_secrets,
@@ -84,13 +89,17 @@ impl CompiledBackendSource for HttpCompiledSource {
         let mut table_infos = Vec::with_capacity(self.manifest.tables.len());
 
         for table in &self.manifest.tables {
+            let metadata = registered_table(table);
             let provider: Arc<dyn TableProvider> = Arc::new(HttpSourceTableProvider::new(
                 backend.clone(),
                 self.manifest.common.name.clone(),
+                Some(self.manifest.common.version.clone()),
                 table.clone(),
+                metadata.schema_signature(),
+                statistics.sink.clone(),
             )?);
             tables.insert(table.name().to_string(), provider);
-            table_infos.push(registered_table(table));
+            table_infos.push(metadata);
         }
         let mut table_functions =
             SourceTableFunctions::with_capacity(self.manifest.functions.len());

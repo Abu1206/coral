@@ -33,6 +33,7 @@ use crate::backends::{
     registered_columns_from_schema, registered_columns_from_specs, required_filter_names,
     schema_from_columns,
 };
+use crate::runtime::statistics::RuntimeStatisticsContext;
 use coral_spec::backends::file::{FileTableSpec, ParquetSourceManifest};
 
 const DEFAULT_PARQUET_EXTENSION: &str = ".parquet";
@@ -223,7 +224,11 @@ impl CompiledBackendSource for ParquetCompiledSource {
         &self.manifest.common.name
     }
 
-    async fn register(&self, ctx: &SessionContext) -> Result<BackendRegistration> {
+    async fn register(
+        &self,
+        ctx: &SessionContext,
+        _statistics: &RuntimeStatisticsContext,
+    ) -> Result<BackendRegistration> {
         let mut tables: HashMap<String, Arc<dyn TableProvider>> = HashMap::new();
         let mut table_infos = Vec::with_capacity(self.manifest.tables.len());
 

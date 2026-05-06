@@ -22,6 +22,10 @@ use crate::backends::{
     RegisteredTable, build_registered_inputs, build_registered_table,
     registered_columns_from_specs, required_filter_names, schema_from_columns,
 };
+use crate::contracts::{StatisticsObservationScope, TableSchemaSignature};
+use crate::runtime::statistics::{
+    BatchStatisticsPlan, RuntimeStatisticsContext, StatisticsObservationSink,
+};
 use crate::{CoreError, QueryRuntimeContext};
 use coral_spec::backends::file::{FileTableSpec, JsonlSourceManifest};
 
@@ -102,8 +106,11 @@ pub(crate) fn compile_manifest(
 #[derive(Debug)]
 pub(crate) struct JsonlTableProvider {
     source_schema: String,
+    source_version: Option<String>,
     table: Arc<FileTableSpec>,
     schema: SchemaRef,
+    schema_signature: TableSchemaSignature,
+    statistics_sink: StatisticsObservationSink,
     /// Resolved base directory for file discovery.
     base_dir: PathBuf,
     /// Compiled glob pattern for matching `JSONL` files within `base_dir`.
@@ -111,8 +118,11 @@ pub(crate) struct JsonlTableProvider {
 }
 
 impl JsonlTableProvider {
-    /// Build a `JSONL`-backed table provider from a source manifest.
-    pub(crate) fn try_new(compiled_table: CompiledJsonlTable) -> Result<Self> {
+    fn try_new_with_statistics(
+        compiled_table: CompiledJsonlTable,
+        source_version: Option<String>,
+        statistics_sink: StatisticsObservationSink,
+    ) -> Result<Self> {
         let CompiledJsonlTable {
             source_schema,
             table,
@@ -128,6 +138,7 @@ impl JsonlTableProvider {
         }
 
         let schema = schema_from_columns(table.columns(), &source_schema, table.name())?;
+        let schema_signature = registered_table(&table).schema_signature();
         if !base_dir.is_dir() {
             return Err(DataFusionError::Plan(format!(
                 "{source_schema}.{} source.location '{}' is not a directory",
@@ -138,8 +149,11 @@ impl JsonlTableProvider {
 
         Ok(Self {
             source_schema,
+            source_version,
             table: Arc::new(table),
             schema,
+            schema_signature,
+            statistics_sink,
             base_dir,
             pattern: glob,
         })
@@ -284,14 +298,19 @@ impl CompiledBackendSource for JsonlCompiledSource {
     async fn register(
         &self,
         _ctx: &datafusion::prelude::SessionContext,
+        statistics: &RuntimeStatisticsContext,
     ) -> Result<BackendRegistration> {
         let mut tables: HashMap<String, Arc<dyn TableProvider>> = HashMap::new();
         let mut table_infos = Vec::with_capacity(self.tables.len());
 
         for compiled_table in &self.tables {
-            let provider = JsonlTableProvider::try_new(compiled_table.clone())?;
             let table_name = compiled_table.table.name().to_string();
             let metadata = registered_table(&compiled_table.table);
+            let provider = JsonlTableProvider::try_new_with_statistics(
+                compiled_table.clone(),
+                Some(self.manifest.common.version.clone()),
+                statistics.sink.clone(),
+            )?;
             tables.insert(table_name, Arc::new(provider));
             table_infos.push(metadata);
         }
@@ -412,16 +431,15 @@ impl TableProvider for JsonlTableProvider {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         self.validate_required_filters(filters)?;
 
-        let fetcher = self.build_fetch_plan();
-        let converter = self.build_converter(filters);
-
-        let exec = JsonExec::new(
+        let exec = JsonExec::new_with_statistics(
             &self.source_schema,
             self.table.name(),
             self.schema.clone(),
-            fetcher,
-            converter,
+            self.build_fetch_plan(),
+            self.build_converter(filters),
             projection.cloned(),
+            self.statistics_plan(),
+            self.statistics_sink.clone(),
         )?;
 
         Ok(Arc::new(exec))
@@ -460,6 +478,16 @@ impl JsonlTableProvider {
             convert_items(table.columns(), schema.clone(), &filter_values, items)
         })
     }
+
+    fn statistics_plan(&self) -> BatchStatisticsPlan {
+        BatchStatisticsPlan::table_global(
+            self.source_schema.clone(),
+            self.table.name().to_string(),
+            self.source_version.clone(),
+            self.schema_signature.clone(),
+        )
+        .with_scope(StatisticsObservationScope::TableGlobal)
+    }
 }
 
 #[derive(Debug)]
@@ -484,7 +512,10 @@ mod tests {
     use crate::backends::compile_source_manifest;
     use crate::runtime::catalog;
     use crate::runtime::registry::{CompiledQuerySource, register_sources_blocking};
-    use crate::{QueryRuntimeContext, QuerySource};
+    use crate::{
+        CoralQuery, QueryRuntimeConfig, QueryRuntimeContext, QuerySource,
+        StatisticsObservationScope,
+    };
     use coral_spec::{ValidatedSourceManifest, parse_source_manifest_value};
     use datafusion::arrow::util::pretty::pretty_format_batches;
     use datafusion::prelude::SessionContext;
@@ -550,6 +581,98 @@ mod tests {
     }
 
     // --- Integration tests ---
+
+    #[tokio::test]
+    async fn unfiltered_query_emits_table_global_statistics_observation() {
+        let fixture_dir = tempdir().expect("tempdir should be created");
+        fs::write(
+            fixture_dir.path().join("events.jsonl"),
+            r#"{"id":1,"category":"alpha","nullable_text":"one"}
+{"id":2,"category":"beta","nullable_text":null}
+{"id":3,"category":"alpha","nullable_text":"three"}
+"#,
+        )
+        .expect("write fixture");
+
+        let location = format!("file://{}/", fixture_dir.path().display());
+        let manifest = jsonl_manifest(
+            &location,
+            &[
+                column("id", "Int64"),
+                column("category", "Utf8"),
+                json!({
+                    "name": "nullable_text",
+                    "type": "Utf8",
+                    "nullable": true,
+                }),
+            ],
+        );
+        let source = QuerySource::new(manifest, BTreeMap::new(), BTreeMap::new());
+
+        let execution = CoralQuery::execute_sql(
+            &[source],
+            QueryRuntimeConfig::default(),
+            "SELECT id, category, nullable_text FROM test_jsonl.events ORDER BY id",
+        )
+        .await
+        .expect("query should succeed");
+
+        let observations = execution.statistics_observations();
+        assert_eq!(observations.len(), 1);
+        let observation = observations.first().expect("one observation");
+        assert_eq!(observation.scope, StatisticsObservationScope::TableGlobal);
+        let by_name = observation
+            .columns
+            .iter()
+            .map(|column| (column.column_name.as_str(), column))
+            .collect::<std::collections::HashMap<_, _>>();
+        let category = by_name.get("category").expect("category stats");
+        let nullable_text = by_name.get("nullable_text").expect("nullable_text stats");
+
+        assert_eq!(category.sample_count, 3);
+        assert_eq!(category.approx_distinct_count.as_ref().unwrap().value, 2);
+        assert_eq!(nullable_text.null_count.as_ref().unwrap().value, 1);
+    }
+
+    #[tokio::test]
+    async fn limited_query_emits_table_global_statistics_observation() {
+        let fixture_dir = tempdir().expect("tempdir should be created");
+        fs::write(
+            fixture_dir.path().join("events.jsonl"),
+            r#"{"id":1,"category":"alpha"}
+{"id":2,"category":"beta"}
+{"id":3,"category":"gamma"}
+"#,
+        )
+        .expect("write fixture");
+
+        let location = format!("file://{}/", fixture_dir.path().display());
+        let manifest = jsonl_manifest(
+            &location,
+            &[column("id", "Int64"), column("category", "Utf8")],
+        );
+        let source = QuerySource::new(manifest, BTreeMap::new(), BTreeMap::new());
+
+        let execution = CoralQuery::execute_sql(
+            &[source],
+            QueryRuntimeConfig::default(),
+            "SELECT id, category FROM test_jsonl.events LIMIT 1",
+        )
+        .await
+        .expect("query should succeed");
+
+        assert_eq!(execution.row_count(), 1);
+        let observations = execution.statistics_observations();
+        assert_eq!(observations.len(), 1);
+        let observation = observations.first().expect("one observation");
+        assert_eq!(observation.scope, StatisticsObservationScope::TableGlobal);
+        let id = observation
+            .columns
+            .iter()
+            .find(|column| column.column_name == "id")
+            .expect("id stats");
+        assert_eq!(id.sample_count, 3);
+    }
 
     #[tokio::test]
     async fn reads_files_across_multiple_subdirectories() {

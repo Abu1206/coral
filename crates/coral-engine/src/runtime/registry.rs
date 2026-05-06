@@ -10,6 +10,7 @@ use crate::backends::{
 };
 use crate::runtime::error::{datafusion_to_core, source_decorator_error_to_core};
 use crate::runtime::schema_provider::StaticSchemaProvider;
+use crate::runtime::statistics::RuntimeStatisticsContext;
 use crate::{CoreError, QuerySource, SourceDecorator, SourceFailurePolicy};
 
 const RESERVED_SCHEMA_NAMES: &[&str] = &["coral", "coral_admin"];
@@ -77,6 +78,7 @@ pub(crate) async fn register_sources(
     ctx: &SessionContext,
     sources: Vec<SourceRegistrationCandidate>,
     source_decorators: &mut [Box<dyn SourceDecorator>],
+    statistics: &RuntimeStatisticsContext,
 ) -> std::result::Result<SourceRegistrationResult, CoreError> {
     let catalog = ctx.catalog("datafusion").ok_or_else(|| {
         let plan_err = DataFusionError::Plan("catalog 'datafusion' not found".to_string());
@@ -100,7 +102,9 @@ pub(crate) async fn register_sources(
                 let schema_name = compiled_source.schema_name().to_string();
                 let source_name = compiled_source.source_name().to_string();
 
-                match register_source(ctx, &mut seen_schemas, compiled_source.as_ref()).await {
+                match register_source(ctx, &mut seen_schemas, compiled_source.as_ref(), statistics)
+                    .await
+                {
                     Ok(registration) => {
                         let BackendRegistration {
                             tables,
@@ -185,6 +189,7 @@ pub(crate) fn register_sources_blocking(
             .map(SourceRegistrationCandidate::Compiled)
             .collect(),
         source_decorators.as_mut_slice(),
+        &RuntimeStatisticsContext::default(),
     ))
 }
 
@@ -192,6 +197,7 @@ async fn register_source(
     ctx: &SessionContext,
     seen_schemas: &mut std::collections::HashSet<String>,
     source: &dyn CompiledBackendSource,
+    statistics: &RuntimeStatisticsContext,
 ) -> DataFusionResult<BackendRegistration> {
     check_reserved_schema(source.schema_name())?;
 
@@ -202,7 +208,7 @@ async fn register_source(
         )));
     }
 
-    source.register(ctx).await
+    source.register(ctx, statistics).await
 }
 
 fn push_source_failure(
