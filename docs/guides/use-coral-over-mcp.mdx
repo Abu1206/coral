@@ -55,6 +55,8 @@ Agents should treat the discovery tools as catalog helpers, not as replacement p
 
 For deeper introspection, query `coral.tables`, `coral.columns`, `coral.filters`, `coral.table_functions`, and `coral.inputs` through the `sql` tool instead of relying only on `list_catalog` or `coral://tables`. Use `coral.filters` as the normalized filter surface, with `coral.columns.filter_mode` available when inspecting filter-only virtual columns.
 
+`coral.columns` also exposes nullable column-statistics fields such as `null_fraction`, `approx_distinct_count`, `stats_sample_count`, `stats_observed_at`, and `stats_precision` when Coral has observed a table through local query execution. These values may be sample-derived, and unsupported or awkward column types may stay `NULL`; agents should treat them as hints unless `stats_precision` says `exact`.
+
 ### Searching a provider's data
 
 Some sources expose native search endpoints (for example, GitHub issue search) as table functions with `kind = 'search'`. Prefer these over scanning a regular table when the agent needs ranked, query-driven results. They return provider-ranked candidates, so agents should preserve any returned rank columns and use the returned ids plus catalog-described tables to fetch full detail rows when the search result itself is incomplete.

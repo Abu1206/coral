@@ -15,7 +15,9 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arrow.workspace = true
 clap.workspace = true
+parquet.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 serde.workspace = true
 serde_json.workspace = true

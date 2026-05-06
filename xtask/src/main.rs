@@ -8,6 +8,8 @@
 //!     (the regression gate for the SOURCE-465 manifest cleanup).
 //!   - `export-skills` exports installable agent skills from the canonical
 //!     plugin tree into a distribution checkout.
+//!   - `write-stats-parquet-fixture` writes a tiny local Parquet fixture used
+//!     by compiled-app smoke tests.
 
 #![allow(
     clippy::print_stderr,
@@ -43,6 +45,8 @@ enum Command {
     DetectTruncations(DetectArgs),
     /// Export installable skills from plugins/coral/skills.
     ExportSkills(ExportSkillsArgs),
+    /// Write a tiny Parquet fixture for column-statistics smoke tests.
+    WriteStatsParquetFixture(WriteStatsParquetFixtureArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -109,6 +113,13 @@ struct ExportSkillsArgs {
     dest: PathBuf,
 }
 
+#[derive(Debug, clap::Args)]
+struct WriteStatsParquetFixtureArgs {
+    /// Directory that should receive `metrics.parquet`.
+    #[arg(long)]
+    output_dir: PathBuf,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli.command) {
@@ -135,7 +146,47 @@ fn run(command: &Command) -> Result<bool> {
             detect::run(&paths, args.verbose)
         }
         Command::ExportSkills(args) => skills::export(&args.dest),
+        Command::WriteStatsParquetFixture(args) => {
+            write_stats_parquet_fixture(&args.output_dir)?;
+            Ok(true)
+        }
     }
+}
+
+fn write_stats_parquet_fixture(output_dir: &Path) -> Result<()> {
+    use std::sync::Arc;
+
+    use arrow::array::{Float64Array, Int64Array, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+
+    fs::create_dir_all(output_dir).with_context(|| format!("creating {}", output_dir.display()))?;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("metric", DataType::Utf8, false),
+        Field::new("nullable_value", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3, 4])),
+            Arc::new(StringArray::from(vec!["cpu", "memory", "cpu", "disk"])),
+            Arc::new(Float64Array::from(vec![
+                Some(0.7),
+                None,
+                Some(0.8),
+                Some(0.4),
+            ])),
+        ],
+    )
+    .context("building stats parquet record batch")?;
+    let path = output_dir.join("metrics.parquet");
+    let file = fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
+    let mut writer = ArrowWriter::try_new(file, schema, None).context("starting parquet writer")?;
+    writer.write(&batch).context("writing parquet fixture")?;
+    writer.close().context("closing parquet fixture")?;
+    Ok(())
 }
 
 fn generate_docs(args: &GenerateDocsArgs) -> Result<bool> {

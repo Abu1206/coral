@@ -5985,9 +5985,11 @@ name = "xtask"
 version = "0.2.1"
 dependencies = [
  "anyhow",
+ "arrow",
  "clap",
  "coral-spec",
  "insta",
+ "parquet",
  "pulldown-cmark",
  "serde",
  "serde_json",
