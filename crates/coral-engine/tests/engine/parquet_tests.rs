@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use coral_engine::CoralQuery;
+use coral_engine::{CoralQuery, StatisticsObservationScope};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -33,15 +33,14 @@ async fn select_all_from_parquet_source() {
     write_parquet_file(temp.path(), "users.parquet", &users_batch());
     let source = build_source(parquet_manifest("parquet_users", temp.path()));
 
-    let rows = execution_to_rows(
-        &CoralQuery::execute_sql(
-            &[source],
-            test_runtime(),
-            "SELECT id, name, email FROM parquet_users.users ORDER BY id",
-        )
-        .await
-        .expect("query should succeed"),
-    );
+    let execution = CoralQuery::execute_sql(
+        &[source],
+        test_runtime(),
+        "SELECT id, name, email FROM parquet_users.users ORDER BY id",
+    )
+    .await
+    .expect("query should succeed");
+    let rows = execution_to_rows(&execution);
 
     assert_eq!(
         rows,
@@ -51,6 +50,20 @@ async fn select_all_from_parquet_source() {
             json!({"id": 3, "name": "Linus", "email": "linus@example.com"}),
         ]
     );
+
+    let observations = execution.statistics_observations();
+    assert_eq!(observations.len(), 1);
+    let observation = observations.first().expect("one observation");
+    assert_eq!(observation.scope, StatisticsObservationScope::TableGlobal);
+    let by_name = observation
+        .columns
+        .iter()
+        .map(|column| (column.column_name.as_str(), column))
+        .collect::<std::collections::HashMap<_, _>>();
+    let id = by_name.get("id").expect("id stats");
+    let name = by_name.get("name").expect("name stats");
+    assert_eq!(id.approx_distinct_count.as_ref().unwrap().value, 3);
+    assert_eq!(name.sample_count, 3);
 }
 
 #[tokio::test]

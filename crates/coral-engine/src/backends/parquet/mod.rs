@@ -2,8 +2,11 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -14,12 +17,14 @@ use datafusion::datasource::listing::{
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
-use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
+};
 use datafusion::prelude::SessionContext;
 use std::io::Cursor;
 
 use bytes::Bytes;
-use futures::TryStreamExt as _;
+use futures::{Stream, TryStreamExt as _};
 use object_store::ObjectStore;
 use object_store::ObjectStoreExt as _;
 use object_store::aws::AmazonS3Builder;
@@ -33,7 +38,11 @@ use crate::backends::{
     registered_columns_from_schema, registered_columns_from_specs, required_filter_names,
     schema_from_columns,
 };
+use crate::contracts::{StatisticsObservationScope, TableSchemaSignature};
 use crate::runtime::statistics::RuntimeStatisticsContext;
+use crate::runtime::statistics::{
+    BatchStatisticsPlan, StatisticsObservationSink, collect_batch_statistics,
+};
 use coral_spec::backends::file::{FileTableSpec, ParquetSourceManifest};
 
 const DEFAULT_PARQUET_EXTENSION: &str = ".parquet";
@@ -77,6 +86,11 @@ pub(crate) fn compile_manifest(
 #[derive(Debug)]
 pub(crate) struct ParquetTableProvider {
     inner: ListingTable,
+    source_schema: String,
+    source_version: Option<String>,
+    table_name: String,
+    schema_signature: TableSchemaSignature,
+    statistics_sink: StatisticsObservationSink,
 }
 
 impl ParquetTableProvider {
@@ -98,6 +112,8 @@ impl ParquetTableProvider {
             source_schema,
             table,
             source_secrets,
+            None,
+            StatisticsObservationSink::default(),
         ))
     }
 
@@ -106,10 +122,21 @@ impl ParquetTableProvider {
         source_schema: &str,
         table: FileTableSpec,
         source_secrets: &BTreeMap<String, String>,
+        source_version: Option<String>,
+        statistics_sink: StatisticsObservationSink,
     ) -> Result<Self> {
+        let table_name = table.name().to_string();
         let inner =
             Self::build_listing_table(ctx.clone(), source_schema, &table, source_secrets).await?;
-        Ok(Self { inner })
+        let metadata = registered_table(&table, &inner.schema());
+        Ok(Self {
+            inner,
+            source_schema: source_schema.to_string(),
+            source_version,
+            table_name,
+            schema_signature: metadata.schema_signature(),
+            statistics_sink,
+        })
     }
 
     async fn build_listing_table(
@@ -210,7 +237,166 @@ impl TableProvider for ParquetTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.inner.scan(state, projection, filters, limit).await
+        let inner = self.inner.scan(state, projection, filters, limit).await?;
+        let statistics_plan = self.statistics_plan(filters, limit);
+        Ok(Arc::new(ObservingExec {
+            inner,
+            statistics_plan,
+            statistics_sink: self.statistics_sink.clone(),
+        }))
+    }
+}
+
+impl ParquetTableProvider {
+    fn statistics_plan(&self, filters: &[Expr], limit: Option<usize>) -> BatchStatisticsPlan {
+        let scope = if limit.is_some() {
+            StatisticsObservationScope::Limited
+        } else if filters.is_empty() {
+            StatisticsObservationScope::TableGlobal
+        } else {
+            StatisticsObservationScope::Filtered {
+                filter_columns: filter_column_names(filters),
+            }
+        };
+        BatchStatisticsPlan::table_global(
+            self.source_schema.clone(),
+            self.table_name.clone(),
+            self.source_version.clone(),
+            self.schema_signature.clone(),
+        )
+        .with_scope(scope)
+    }
+}
+
+fn filter_column_names(filters: &[Expr]) -> Vec<String> {
+    let mut columns = BTreeSet::new();
+    for filter in filters {
+        for column in filter.column_refs() {
+            columns.insert(column.name().to_string());
+        }
+    }
+    columns.into_iter().collect()
+}
+
+#[derive(Debug)]
+struct ObservingExec {
+    inner: Arc<dyn ExecutionPlan>,
+    statistics_plan: BatchStatisticsPlan,
+    statistics_sink: StatisticsObservationSink,
+}
+
+impl DisplayAs for ObservingExec {
+    fn fmt_as(&self, format: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.inner.fmt_as(format, f)
+    }
+}
+
+impl ExecutionPlan for ObservingExec {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn properties(&self) -> &Arc<PlanProperties> {
+        self.inner.properties()
+    }
+
+    fn partition_statistics(
+        &self,
+        partition: Option<usize>,
+    ) -> Result<datafusion::common::Statistics> {
+        self.inner.partition_statistics(partition)
+    }
+
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.inner]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        if children.len() != 1 {
+            return Err(DataFusionError::Execution(format!(
+                "ObservingExec expected one child, got {}",
+                children.len()
+            )));
+        }
+        Ok(Arc::new(Self {
+            inner: children.remove(0),
+            statistics_plan: self.statistics_plan.clone(),
+            statistics_sink: self.statistics_sink.clone(),
+        }))
+    }
+
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<datafusion::execution::TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
+        let inner = self.inner.execute(partition, context)?;
+        Ok(Box::pin(ObservingStream {
+            schema: inner.schema(),
+            inner,
+            batches: Vec::new(),
+            statistics_plan: self.statistics_plan.clone(),
+            statistics_sink: self.statistics_sink.clone(),
+            emitted: false,
+            failed: false,
+        }))
+    }
+
+    fn metrics(&self) -> Option<datafusion::physical_plan::metrics::MetricsSet> {
+        self.inner.metrics()
+    }
+}
+
+struct ObservingStream {
+    schema: SchemaRef,
+    inner: SendableRecordBatchStream,
+    batches: Vec<datafusion::arrow::array::RecordBatch>,
+    statistics_plan: BatchStatisticsPlan,
+    statistics_sink: StatisticsObservationSink,
+    emitted: bool,
+    failed: bool,
+}
+
+impl Stream for ObservingStream {
+    type Item = Result<datafusion::arrow::array::RecordBatch>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(batch))) => {
+                this.batches.push(batch.clone());
+                Poll::Ready(Some(Ok(batch)))
+            }
+            Poll::Ready(Some(Err(error))) => {
+                this.failed = true;
+                Poll::Ready(Some(Err(error)))
+            }
+            Poll::Ready(None) => {
+                if !this.failed && !this.emitted {
+                    this.emitted = true;
+                    if let Some(observation) =
+                        collect_batch_statistics(&this.statistics_plan, &this.batches)
+                    {
+                        this.statistics_sink.observe(observation);
+                    }
+                }
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl datafusion::execution::RecordBatchStream for ObservingStream {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }
 
@@ -227,7 +413,7 @@ impl CompiledBackendSource for ParquetCompiledSource {
     async fn register(
         &self,
         ctx: &SessionContext,
-        _statistics: &RuntimeStatisticsContext,
+        statistics: &RuntimeStatisticsContext,
     ) -> Result<BackendRegistration> {
         let mut tables: HashMap<String, Arc<dyn TableProvider>> = HashMap::new();
         let mut table_infos = Vec::with_capacity(self.manifest.tables.len());
@@ -238,6 +424,8 @@ impl CompiledBackendSource for ParquetCompiledSource {
                 &self.manifest.common.name,
                 table.clone(),
                 &self.source_secrets,
+                Some(self.manifest.common.version.clone()),
+                statistics.sink.clone(),
             )
             .await?;
             let schema = provider.schema();

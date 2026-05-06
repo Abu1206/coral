@@ -7,6 +7,7 @@ use chrono::{SecondsFormat, Utc};
 use datafusion::arrow::array::{
     Array, BooleanArray, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType, TimeUnit};
 
 use crate::contracts::{
@@ -179,6 +180,9 @@ fn distinct_count_for_signature(
 fn distinct_count(data_type: &DataType, batches: &[RecordBatch], column_name: &str) -> Option<u64> {
     match data_type {
         DataType::Utf8 => distinct_utf8(batches, column_name),
+        DataType::Dictionary(_, value_type) if value_type.as_ref() == &DataType::Utf8 => {
+            distinct_cast_utf8(batches, column_name)
+        }
         DataType::Int64 => distinct_int64::<Int64Array>(batches, column_name),
         DataType::Boolean => distinct_bool(batches, column_name),
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
@@ -186,6 +190,21 @@ fn distinct_count(data_type: &DataType, batches: &[RecordBatch], column_name: &s
         }
         _ => None,
     }
+}
+
+fn distinct_cast_utf8(batches: &[RecordBatch], column_name: &str) -> Option<u64> {
+    let mut values = HashSet::new();
+    for batch in batches {
+        let array = batch.column_by_name(column_name)?;
+        let casted = cast(array, &DataType::Utf8).ok()?;
+        let string_array = casted.as_any().downcast_ref::<StringArray>()?;
+        for row in 0..string_array.len() {
+            if string_array.is_valid(row) {
+                values.insert(string_array.value(row).to_string());
+            }
+        }
+    }
+    Some(u64::try_from(values.len()).unwrap_or(u64::MAX))
 }
 
 fn distinct_utf8(batches: &[RecordBatch], column_name: &str) -> Option<u64> {
