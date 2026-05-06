@@ -254,6 +254,7 @@ impl CompiledBackendSource for ParquetCompiledSource {
             table_functions: HashMap::default(),
             source: RegisteredSource {
                 schema_name: self.manifest.common.name.clone(),
+                source_version: self.manifest.common.version.clone(),
                 tables: table_infos,
                 table_functions: vec![],
                 inputs,
@@ -688,8 +689,12 @@ mod tests {
 
         let active_sources = register_sources_blocking(&ctx, compile_sources(vec![manifest]))
             .expect("parquet source should register");
-        catalog::register(&ctx, &active_sources.active_sources)
-            .expect("metadata tables should register");
+        catalog::register(
+            &ctx,
+            &active_sources.active_sources,
+            &crate::StatisticsProfile::empty(),
+        )
+        .expect("metadata tables should register");
 
         let batches = ctx
             .sql(

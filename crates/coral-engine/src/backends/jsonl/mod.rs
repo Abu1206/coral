@@ -308,6 +308,7 @@ impl CompiledBackendSource for JsonlCompiledSource {
             table_functions: HashMap::default(),
             source: RegisteredSource {
                 schema_name: self.manifest.common.name.clone(),
+                source_version: self.manifest.common.version.clone(),
                 tables: table_infos,
                 table_functions: vec![],
                 inputs,
@@ -621,8 +622,12 @@ mod tests {
 
         let active_plugins = register_sources_blocking(&ctx, compile_sources(vec![manifest]))
             .expect("jsonl plugin should register");
-        catalog::register(&ctx, &active_plugins.active_sources)
-            .expect("metadata tables should register");
+        catalog::register(
+            &ctx,
+            &active_plugins.active_sources,
+            &crate::StatisticsProfile::empty(),
+        )
+        .expect("metadata tables should register");
 
         let batches = ctx
             .sql(
