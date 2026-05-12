@@ -9,12 +9,44 @@ inputs:
   NOTION_API_KEY:
     kind: secret
     hint: |
-      Create an internal Notion integration and copy its internal integration
-      token. Share the pages and databases you want to query with the
-      integration from Notion's "Add connections" menu.
+      Connect with Notion OAuth or provide an internal integration token.
+      For OAuth, create a public Notion connection with this redirect URI:
+      http://127.0.0.1:53682/oauth/callback. Then provide the OAuth client ID
+      and client secret when prompted.
+
+      For a token, create an internal Notion integration and copy its internal
+      integration token. Share the pages and databases you want to query with
+      the integration from Notion's "Add connections" menu.
 
       The token needs read content capabilities for most tables. See the
-      [Notion authorization docs](https://developers.notion.com/reference/authorization).
+      [Notion authorization docs](https://developers.notion.com/guides/get-started/authorization).
+    credential:
+      methods:
+        - type: oauth
+          label: Connect with Notion
+          description: Authorize a public Notion connection with OAuth.
+          oauth:
+            flow:
+              type: authorization_code
+              pkce: disabled
+            redirect_uri: http://127.0.0.1:53682/oauth/callback
+            redirect_uri_port: fixed
+            endpoints:
+              authorization_url: https://api.notion.com/v1/oauth/authorize?owner=user
+              token_url: https://api.notion.com/v1/oauth/token
+            token_request:
+              body_format: json
+              headers:
+                - name: Notion-Version
+                  value: "2026-03-11"
+            client:
+              id:
+                input: NOTION_OAUTH_CLIENT_ID
+              secret:
+                input: NOTION_OAUTH_CLIENT_SECRET
+                transport: basic_auth
+        - type: source_config
+          label: Paste internal integration token
 base_url: https://api.notion.com
 auth:
   type: HeaderAuth

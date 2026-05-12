@@ -1,9 +1,28 @@
 # Notion source
 
-This bundled source queries Notion's read APIs with an internal integration
-token.
+This bundled source queries Notion's read APIs with OAuth or an internal
+integration token.
 
 ## Configure
+
+### OAuth
+
+Create a public Notion connection, configure this OAuth redirect URI, and copy
+the OAuth client ID and client secret:
+
+```text
+http://127.0.0.1:53682/oauth/callback
+```
+
+Then run:
+
+```sh
+coral source add --interactive notion
+```
+
+Choose **Connect with Notion** and enter the OAuth client values when prompted.
+
+### Internal integration token
 
 Create a Notion internal integration, copy its internal integration token, and
 share the pages or databases you want to query with that integration.
