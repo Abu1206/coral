@@ -14,9 +14,9 @@ use coral_api::v1::{
     OAuthAuthorizationCodeCredentialMethod, OAuthCredentialAuthorization, OAuthCredentialClient,
     OAuthCredentialClientId, OAuthCredentialClientSecret, OAuthCredentialCompleted,
     OAuthCredentialEndpoints, OAuthCredentialInput, OAuthCredentialRetrieval, OAuthCredentialScope,
-    OAuthCredentialScopes, OauthCredentialClientSecretTransport, OauthCredentialPkceMode,
-    OauthCredentialRedirectUriPortMode, OauthCredentialScopeDelimiter, Source,
-    SourceConfigCredentialMethod, SourceCredential, SourceCredentialMethod, SourceInfo,
+    OAuthCredentialScopes, OauthCredentialClientSecretTransport, OauthCredentialFlowType,
+    OauthCredentialPkceMode, OauthCredentialRedirectUriPortMode, OauthCredentialScopeDelimiter,
+    Source, SourceConfigCredentialMethod, SourceCredential, SourceCredentialMethod, SourceInfo,
     SourceInputSpec, SourceOrigin as ProtoSourceOrigin, SourceSecret, SourceSecretInput,
     SourceVariable, SourceVariableInput, ValidateSourceRequest, ValidateSourceResponse,
     create_bundled_source_with_o_auth_response, import_source_response,
@@ -25,8 +25,8 @@ use coral_api::v1::{
 };
 use coral_spec::{
     ManifestCredentialMethodKind, ManifestCredentialSpec, ManifestInputKind, ManifestInputSpec,
-    ManifestOAuthClientSecretTransport, ManifestOAuthCredentialSpec, ManifestOAuthPkceMode,
-    ManifestOAuthRedirectUriPortMode, ManifestOAuthScopeDelimiter,
+    ManifestOAuthClientSecretTransport, ManifestOAuthCredentialSpec, ManifestOAuthFlowKind,
+    ManifestOAuthPkceMode, ManifestOAuthRedirectUriPortMode, ManifestOAuthScopeDelimiter,
 };
 use tonic::{Request, Response, Status};
 
@@ -454,10 +454,16 @@ fn import_source_event_to_proto(event: ImportSourceWithCredentialsEvent) -> Impo
             input_key,
             authorization_url,
             expires_in_seconds,
+            user_code,
+            verification_uri,
+            verification_uri_complete,
         } => import_source_response::Event::OauthAuthorization(OAuthCredentialAuthorization {
             input_key,
             authorization_url,
             expires_in_seconds,
+            user_code: user_code.unwrap_or_default(),
+            verification_uri: verification_uri.unwrap_or_default(),
+            verification_uri_complete: verification_uri_complete.unwrap_or_default(),
         }),
         ImportSourceWithCredentialsEvent::OAuthCompleted {
             input_key,
@@ -581,10 +587,11 @@ fn credential_method_to_proto(
 
 fn oauth_to_proto(oauth: ManifestOAuthCredentialSpec) -> OAuthAuthorizationCodeCredentialMethod {
     OAuthAuthorizationCodeCredentialMethod {
-        redirect_uri: oauth.redirect_uri,
+        redirect_uri: oauth.redirect_uri.unwrap_or_default(),
         endpoints: Some(OAuthCredentialEndpoints {
-            authorization_url: oauth.authorization_url,
+            authorization_url: oauth.authorization_url.unwrap_or_default(),
             token_url: oauth.token_url,
+            device_authorization_url: oauth.device_authorization_url.unwrap_or_default(),
         }),
         client: Some(OAuthCredentialClient {
             id: Some(OAuthCredentialClientId {
@@ -600,6 +607,7 @@ fn oauth_to_proto(oauth: ManifestOAuthCredentialSpec) -> OAuthAuthorizationCodeC
                 }),
         }),
         redirect_uri_port_mode: proto_redirect_uri_port_mode(oauth.redirect_uri_port_mode) as i32,
+        flow: proto_oauth_flow_kind(oauth.flow.kind) as i32,
         scopes: oauth.scopes.map(|scopes| OAuthCredentialScopes {
             scope: Some(OAuthCredentialScope {
                 delimiter: proto_oauth_scope_delimiter(scopes.scope.delimiter) as i32,
@@ -616,6 +624,13 @@ fn proto_redirect_uri_port_mode(
     match mode {
         ManifestOAuthRedirectUriPortMode::Fixed => OauthCredentialRedirectUriPortMode::Fixed,
         ManifestOAuthRedirectUriPortMode::Random => OauthCredentialRedirectUriPortMode::Random,
+    }
+}
+
+fn proto_oauth_flow_kind(kind: ManifestOAuthFlowKind) -> OauthCredentialFlowType {
+    match kind {
+        ManifestOAuthFlowKind::AuthorizationCode => OauthCredentialFlowType::AuthorizationCode,
+        ManifestOAuthFlowKind::DeviceCode => OauthCredentialFlowType::DeviceCode,
     }
 }
 
@@ -682,10 +697,12 @@ mod tests {
                                 kind: ManifestOAuthFlowKind::AuthorizationCode,
                                 pkce: ManifestOAuthPkceMode::Required,
                             },
-                            redirect_uri: "http://127.0.0.1:53682/oauth/callback".to_string(),
+                            redirect_uri: Some("http://127.0.0.1:53682/oauth/callback".to_string()),
                             redirect_uri_port_mode: ManifestOAuthRedirectUriPortMode::Fixed,
-                            authorization_url: "https://provider.example.com/oauth/authorize"
-                                .to_string(),
+                            authorization_url: Some(
+                                "https://provider.example.com/oauth/authorize".to_string(),
+                            ),
+                            device_authorization_url: None,
                             token_url: "https://provider.example.com/oauth/token".to_string(),
                             client: ManifestOAuthClientSpec {
                                 id: ManifestOAuthClientIdSpec {

@@ -2,8 +2,8 @@
 
 use coral_api::v1::{
     OAuthAuthorizationCodeCredentialMethod, OauthCredentialClientSecretTransport,
-    OauthCredentialPkceMode, OauthCredentialRedirectUriPortMode, OauthCredentialScopeDelimiter,
-    SourceCredential, SourceCredentialMethod, SourceInputSpec,
+    OauthCredentialFlowType, OauthCredentialPkceMode, OauthCredentialRedirectUriPortMode,
+    OauthCredentialScopeDelimiter, SourceCredential, SourceCredentialMethod, SourceInputSpec,
     source_credential_method::Method as ProtoCredentialMethod,
     source_input_spec::Input as ProtoSourceInput,
 };
@@ -31,6 +31,9 @@ pub enum SourceInputDecodeError {
     /// The OAuth PKCE mode was missing or unknown.
     #[error("unknown oauth pkce mode")]
     UnknownOAuthPkceMode,
+    /// The OAuth flow type was missing or unknown.
+    #[error("unknown oauth flow type")]
+    UnknownOAuthFlowType,
     /// The OAuth redirect URI port mode was missing or unknown.
     #[error("unknown oauth redirect URI port mode")]
     UnknownOAuthRedirectUriPortMode,
@@ -141,12 +144,15 @@ fn oauth_authorization_code_from_proto(
         .and_then(oauth_client_from_proto)?;
     Ok(ManifestOAuthCredentialSpec {
         flow: ManifestOAuthFlowSpec {
-            kind: ManifestOAuthFlowKind::AuthorizationCode,
+            kind: oauth_flow_kind_from_proto(oauth.flow)?,
             pkce: oauth_pkce_from_proto(oauth.pkce)?,
         },
-        redirect_uri: oauth.redirect_uri.clone(),
+        redirect_uri: (!oauth.redirect_uri.is_empty()).then(|| oauth.redirect_uri.clone()),
         redirect_uri_port_mode: redirect_uri_port_mode_from_proto(oauth.redirect_uri_port_mode)?,
-        authorization_url: endpoints.authorization_url.clone(),
+        authorization_url: (!endpoints.authorization_url.is_empty())
+            .then(|| endpoints.authorization_url.clone()),
+        device_authorization_url: (!endpoints.device_authorization_url.is_empty())
+            .then(|| endpoints.device_authorization_url.clone()),
         token_url: endpoints.token_url.clone(),
         client,
         scopes: oauth
@@ -155,6 +161,18 @@ fn oauth_authorization_code_from_proto(
             .map(oauth_scopes_from_proto)
             .transpose()?,
     })
+}
+
+fn oauth_flow_kind_from_proto(flow: i32) -> Result<ManifestOAuthFlowKind, SourceInputDecodeError> {
+    match OauthCredentialFlowType::try_from(flow) {
+        Ok(OauthCredentialFlowType::AuthorizationCode) => {
+            Ok(ManifestOAuthFlowKind::AuthorizationCode)
+        }
+        Ok(OauthCredentialFlowType::DeviceCode) => Ok(ManifestOAuthFlowKind::DeviceCode),
+        Ok(OauthCredentialFlowType::Unspecified) | Err(_) => {
+            Err(SourceInputDecodeError::UnknownOAuthFlowType)
+        }
+    }
 }
 
 fn oauth_pkce_from_proto(pkce: i32) -> Result<ManifestOAuthPkceMode, SourceInputDecodeError> {
@@ -275,6 +293,7 @@ mod tests {
                             description: String::new(),
                             method: Some(ProtoCredentialMethod::OauthAuthorizationCode(
                                 OAuthAuthorizationCodeCredentialMethod {
+                                    flow: OauthCredentialFlowType::AuthorizationCode as i32,
                                     pkce: OauthCredentialPkceMode::Required as i32,
                                     redirect_uri: "http://127.0.0.1:53682/oauth/callback"
                                         .to_string(),
@@ -284,6 +303,7 @@ mod tests {
                                                 .to_string(),
                                         token_url: "https://provider.example.com/oauth/token"
                                             .to_string(),
+                                        device_authorization_url: String::new(),
                                     }),
                                     client: Some(OAuthCredentialClient {
                                         id: Some(OAuthCredentialClientId {
@@ -331,6 +351,15 @@ mod tests {
                 .oauth
                 .as_ref()
                 .expect("oauth")
+                .authorization_url
+                .as_deref(),
+            Some("https://provider.example.com/oauth/authorize")
+        );
+        assert_eq!(
+            credential.methods[0]
+                .oauth
+                .as_ref()
+                .expect("oauth")
                 .client
                 .id
                 .default
@@ -343,7 +372,10 @@ mod tests {
         );
     }
 
-    fn source_input_with_oauth_pkce(pkce: OauthCredentialPkceMode) -> SourceInputSpec {
+    fn source_input_with_oauth_flow(
+        flow: OauthCredentialFlowType,
+        pkce: OauthCredentialPkceMode,
+    ) -> SourceInputSpec {
         SourceInputSpec {
             key: "API_TOKEN".to_string(),
             required: true,
@@ -355,6 +387,7 @@ mod tests {
                         description: String::new(),
                         method: Some(ProtoCredentialMethod::OauthAuthorizationCode(
                             OAuthAuthorizationCodeCredentialMethod {
+                                flow: flow as i32,
                                 pkce: pkce as i32,
                                 redirect_uri: "http://127.0.0.1:53682/oauth/callback".to_string(),
                                 endpoints: Some(OAuthCredentialEndpoints {
@@ -362,6 +395,7 @@ mod tests {
                                         "https://provider.example.com/oauth/authorize".to_string(),
                                     token_url: "https://provider.example.com/oauth/token"
                                         .to_string(),
+                                    device_authorization_url: String::new(),
                                 }),
                                 client: Some(OAuthCredentialClient {
                                     id: Some(OAuthCredentialClientId {
@@ -382,6 +416,21 @@ mod tests {
     }
 
     #[test]
+    fn manifest_input_from_proto_rejects_unspecified_oauth_flow_type() {
+        let input = source_input_with_oauth_flow(
+            OauthCredentialFlowType::Unspecified,
+            OauthCredentialPkceMode::Required,
+        );
+
+        let error = manifest_input_from_proto(&input).expect_err("unspecified flow should fail");
+
+        assert!(matches!(
+            error,
+            SourceInputDecodeError::UnknownOAuthFlowType
+        ));
+    }
+
+    #[test]
     fn manifest_input_from_proto_rejects_missing_input_metadata() {
         let input = SourceInputSpec {
             key: "API_TOKEN".to_string(),
@@ -397,7 +446,10 @@ mod tests {
 
     #[test]
     fn manifest_input_from_proto_rejects_unspecified_oauth_pkce_mode() {
-        let input = source_input_with_oauth_pkce(OauthCredentialPkceMode::Unspecified);
+        let input = source_input_with_oauth_flow(
+            OauthCredentialFlowType::AuthorizationCode,
+            OauthCredentialPkceMode::Unspecified,
+        );
 
         let error = manifest_input_from_proto(&input).expect_err("unspecified pkce should fail");
 
