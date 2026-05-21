@@ -43,6 +43,7 @@ export function SidebarButton<T extends ElementType = 'button'>(props: Polymorph
   const Component = (as ?? 'button') as ElementType
   const isNativeButton = Component === 'button'
   const type = 'type' in props ? props.type! : 'button'
+  const label = typeof children === 'string' ? children : undefined
 
   const componentProps = {
     className: classNames(
@@ -52,6 +53,7 @@ export function SidebarButton<T extends ElementType = 'button'>(props: Polymorph
     ),
     ref,
     ...rest,
+    ...(isMinimized && label ? { 'aria-label': label } : {}),
     onClick: !isNativeButton && disabled ? handleDisabledClick : rest.onClick,
     ...(isNativeButton && { disabled, type }),
     ...(!isNativeButton && disabled && { 'aria-disabled': true, href: undefined, tabIndex: -1 }),
@@ -60,7 +62,7 @@ export function SidebarButton<T extends ElementType = 'button'>(props: Polymorph
   return (
     <Component {...componentProps}>
       <Icon className={iconStyles({ variant })} color="inherit" name={icon} size="18" />
-      {children && <span className={textStyles({ variant })}>{children}</span>}
+      {!isMinimized && children && <span className={textStyles({ variant })}>{children}</span>}
     </Component>
   )
 }
