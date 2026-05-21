@@ -198,11 +198,8 @@ export const tabContent = style({ display: 'flex', flex: '1 1 280px', flexDirect
 export const waterfallRoot = style({
   alignItems: 'stretch',
   display: 'flex',
-  flex: 1,
   gap: 8,
-  height: '100%',
   minHeight: 280,
-  overflow: 'hidden',
   paddingBlock: 8,
   paddingInline: 12,
 })
@@ -246,7 +243,6 @@ export const waterfallSidePanel = style({
   minHeight: 0,
   minWidth: 320,
   opacity: 0,
-  overflow: 'hidden',
   transform: 'translateX(12px)',
   transition: 'opacity 140ms ease, transform 180ms ease',
   selectors: {
@@ -400,7 +396,6 @@ export const waterfallHttpDetail = style({
   gap: 10,
   minHeight: 0,
   minWidth: 0,
-  overflow: 'hidden',
 })
 export const waterfallHttpDetailHeader = style({
   alignItems: 'center',
@@ -424,8 +419,7 @@ export const waterfallHttpDetailHeaderActions = style({
   flexShrink: 0,
   gap: 2,
 })
-export const waterfallHttpDetailScroll = style({ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' })
-export const waterfallHttpDetailContent = style({ display: 'flex', flexDirection: 'column', gap: 10, height: '100%', minHeight: 0, minWidth: 0, paddingBlockEnd: 10, paddingInline: 12 })
+export const waterfallHttpDetailContent = style({ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, minWidth: 0, paddingBlockEnd: 10, paddingInline: 12 })
 export const waterfallHttpTabRow = style({ alignItems: 'center', display: 'flex', gap: 12, justifyContent: 'space-between', minWidth: 0 })
 export const httpMetaRow = style({ display: 'flex', flexWrap: 'wrap', gap: 6 })
 export const httpMetaChip = style({
@@ -440,8 +434,8 @@ export const httpMetaChip = style({
   paddingInline: 8,
 })
 export const copyButtonGroup = style({ alignItems: 'center', display: 'flex', flexShrink: 0, gap: 6 })
-export const waterfallHttpDetailSection = style({ display: 'flex', flex: 1, flexDirection: 'column', gap: 4, minHeight: 0, minWidth: 0, overflow: 'hidden' })
-export const bodyViewer = style({ display: 'flex', flex: 1, flexDirection: 'column', gap: 8, minHeight: 0, minWidth: 0, overflow: 'hidden' })
+export const waterfallHttpDetailSection = style({ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0, minWidth: 0 })
+export const bodyViewer = style({ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0, minWidth: 0 })
 export const bodyViewerHeader = style({ display: 'flex', flexDirection: 'column', gap: 6 })
 export const bodyMetaRow = style({ display: 'flex', flexWrap: 'wrap', gap: 6 })
 export const bodyViewerSection = style({ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0, minWidth: 0 })
@@ -469,13 +463,13 @@ export const detailsSummary = style({ color: theme.content.tertiary, cursor: 'po
 export const detailsPre = style({
   backgroundColor: theme.surface.main,
   borderRadius: 6,
-  flex: 1,
   fontFamily: codeFontFamily,
   fontSize: 12,
   lineHeight: '18px',
   margin: 0,
   marginBlockStart: 4,
   minHeight: 0,
+  maxHeight: 240,
   overflow: 'auto',
   padding: 8,
   whiteSpace: 'pre-wrap',
