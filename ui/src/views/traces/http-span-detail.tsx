@@ -441,8 +441,8 @@ export function HttpSpanDetail({
     <div className={s.waterfallHttpDetail} data-span-inspector="true" onClick={(event) => event.stopPropagation()}>
       <div className={s.waterfallHttpDetailHeader}>
         <div className={s.waterfallHttpDetailTitle}>
-          <Typography.BodySmallStrong as="span">Span details</Typography.BodySmallStrong>
-          <Typography.BodySmall as="span" variant="tertiary" truncate>{spanOperation(span)}</Typography.BodySmall>
+          <Typography.CodeSmallInlineStrong as="span" className={s.methodBadge}>{spanOperation(span)}</Typography.CodeSmallInlineStrong>
+          <Typography.BodySmall as="span" className={s.requestUrl} variant="tertiary" truncate>{url || 'No URL recorded'}</Typography.BodySmall>
         </div>
         <div className={s.waterfallHttpDetailHeaderActions}>
           <Button.IconButton
@@ -471,10 +471,6 @@ export function HttpSpanDetail({
         </div>
       </div>
       <div className={s.waterfallHttpDetailContent}>
-        <div className={s.requestUrlRow}>
-          <Typography.CodeSmallInline as="span" className={s.methodBadge}>{spanOperation(span)}</Typography.CodeSmallInline>
-          <Typography.Body as="span" variant="tertiary" className={s.requestUrl}>{url || 'No URL recorded'}</Typography.Body>
-        </div>
         <div className={s.httpMetaRow}>
           {statusCode && metaChip('Status', statusCode)}
           {metaChip('Duration', formatDurationFromNanos(span.durationNanos))}
