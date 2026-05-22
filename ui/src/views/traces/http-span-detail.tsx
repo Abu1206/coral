@@ -9,8 +9,10 @@ import * as s from '../traces-page.css'
 import { formatDuration, formatDurationFromNanos, parseJsonObject, spanOperation, spanUrl } from './trace-utils'
 
 type JsonValue = Record<string, unknown> | unknown[] | string | number | boolean | null
+type BodyKind = 'request' | 'response'
 type HttpDetailTab = 'params' | 'request' | 'response'
 type CopyKind = 'formatted' | 'raw'
+type CopyState = CopyKind | 'failed' | 'idle'
 
 const REQUEST_BODY_ATTR = 'coral.http.request.body'
 const RESPONSE_BODY_ATTR = 'coral.http.response.body'
@@ -24,6 +26,18 @@ const BODY_ATTRIBUTE_KEYS = new Set([
   REQUEST_BODY_ATTR,
   RESPONSE_BODY_ATTR,
 ])
+const BODY_DETAILS = {
+  request: {
+    label: 'Request body',
+    presentAttr: REQUEST_BODY_PRESENT_ATTR,
+    sizeAttr: REQUEST_BODY_SIZE_ATTR,
+  },
+  response: {
+    label: 'Response body',
+    presentAttr: RESPONSE_BODY_PRESENT_ATTR,
+    sizeAttr: RESPONSE_BODY_SIZE_ATTR,
+  },
+} satisfies Record<BodyKind, { label: string; presentAttr: string; sizeAttr: string }>
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -81,8 +95,6 @@ function formatRawValue(value: unknown, formatted: string): string {
   if (value === undefined || value === null || value === '') return ''
   return typeof value === 'string' ? value : formatted
 }
-
-type BodyKind = 'request' | 'response'
 
 interface GraphqlBodyPreview {
   bodyKind: BodyKind
@@ -167,6 +179,10 @@ function BodySection({ children, label }: { children: React.ReactNode; label: st
   )
 }
 
+function presenceCountLabel(value: JsonValue) {
+  return Array.isArray(value) ? `${value.length}` : 'present'
+}
+
 function BodyViewer({
   emptyText,
   kind,
@@ -201,9 +217,6 @@ function BodyViewer({
   }
 
   const { bodyKind, data, errors, operationName, operationType, query, variables } = preview.graphql
-  const errorCountLabel = Array.isArray(errors) ? `${errors.length}` : 'present'
-  const dataCountLabel = Array.isArray(data) ? `${data.length}` : 'present'
-  const variablesCountLabel = Array.isArray(variables) ? `${variables.length}` : 'present'
 
   return (
     <div className={s.bodyViewer}>
@@ -212,9 +225,9 @@ function BodyViewer({
         <div className={s.bodyMetaRow}>
           {operationName && metaChip('Operation', operationName)}
           {operationType && metaChip('Type', operationType)}
-          {variables !== undefined && metaChip('Variables', variablesCountLabel)}
-          {errors !== undefined && metaChip('Errors', errorCountLabel)}
-          {data !== undefined && metaChip('Data', dataCountLabel)}
+          {variables !== undefined && metaChip('Variables', presenceCountLabel(variables))}
+          {errors !== undefined && metaChip('Errors', presenceCountLabel(errors))}
+          {data !== undefined && metaChip('Data', presenceCountLabel(data))}
         </div>
       </div>
       {query !== undefined && <BodySection label="Query"><pre className={s.detailsPre}>{query}</pre></BodySection>}
@@ -297,41 +310,14 @@ function formatBytes(value: unknown): string | undefined {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function bodyEmptyText(kind: 'request' | 'response', attrs: Record<string, unknown>, truncated: boolean) {
-  const label = bodyLabel(kind)
-  const size = formatBytes(attrs[bodySizeAttr(kind)])
-  const present = bodyPresent(kind, attrs, size)
+function bodyEmptyText(kind: BodyKind, attrs: Record<string, unknown>, truncated: boolean) {
+  const bodyDetails = BODY_DETAILS[kind]
+  const size = formatBytes(attrs[bodyDetails.sizeAttr])
+  const present = attrBool(attrs[bodyDetails.presentAttr]) || (kind === 'response' && Boolean(size))
 
-  if (truncated) return `${label} was truncated${size ? ` (${size})` : ''}, but no preview was recorded.`
-  if (present) return `${label} was present${size ? ` (${size})` : ''}, but content was not captured.`
+  if (truncated) return `${bodyDetails.label} was truncated${size ? ` (${size})` : ''}, but no preview was recorded.`
+  if (present) return `${bodyDetails.label} was present${size ? ` (${size})` : ''}, but content was not captured.`
   return `No ${kind} body was recorded for this request.`
-}
-
-function bodyLabel(kind: BodyKind) {
-  switch (kind) {
-    case 'request':
-      return 'Request body'
-    case 'response':
-      return 'Response body'
-  }
-}
-
-function bodySizeAttr(kind: BodyKind) {
-  switch (kind) {
-    case 'request':
-      return REQUEST_BODY_SIZE_ATTR
-    case 'response':
-      return RESPONSE_BODY_SIZE_ATTR
-  }
-}
-
-function bodyPresent(kind: BodyKind, attrs: Record<string, unknown>, size: string | undefined) {
-  switch (kind) {
-    case 'request':
-      return attrBool(attrs[REQUEST_BODY_PRESENT_ATTR])
-    case 'response':
-      return attrBool(attrs[RESPONSE_BODY_PRESENT_ATTR]) || Boolean(size)
-  }
 }
 
 function preferredHttpDetailTab(responseBody: JsonValue, requestBody: JsonValue, paramsValue: Record<string, string | string[]> | undefined): HttpDetailTab {
@@ -341,7 +327,7 @@ function preferredHttpDetailTab(responseBody: JsonValue, requestBody: JsonValue,
   return 'response'
 }
 
-function formattedCopyLabel(copyState: CopyKind | 'failed' | 'idle') {
+function formattedCopyLabel(copyState: CopyState) {
   switch (copyState) {
     case 'formatted':
       return 'Copied'
@@ -380,7 +366,7 @@ export function HttpSpanDetail({
   traceStart: bigint
 }) {
   const [activeTab, setActiveTab] = useState<HttpDetailTab>('response')
-  const [copyState, setCopyState] = useState<CopyKind | 'failed' | 'idle'>('idle')
+  const [copyState, setCopyState] = useState<CopyState>('idle')
   const attrs = parseJsonObject(span.attributesJson)
   const url = spanUrl(span)
   const params = requestParams(url)
