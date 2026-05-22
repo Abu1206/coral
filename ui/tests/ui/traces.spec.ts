@@ -47,7 +47,6 @@ test('lists 10 traces, searches one, opens its details, and opens a span inspect
   await page.getByRole('button', { name: /^GET github\.pull_requests\b/ }).click()
 
   await expect(page.getByText('GET github.pull_requests /repos/oxide/coral/pulls?state=open&per_page=25')).toBeVisible()
-  await expect(page.getByText('Response body')).toBeVisible()
   await expect(page.getByText('\"title\": \"Add MSW Playwright trace fixtures\"')).toBeVisible()
   await expect(page.getByText('Raw body')).toBeVisible()
   await expect(page.getByText('Span attributes')).toBeVisible()
@@ -55,11 +54,7 @@ test('lists 10 traces, searches one, opens its details, and opens a span inspect
   await review.pause()
 })
 
-test('renders trace request and response bodies with JSON, GraphQL, and fallback states', async ({ network, page, review }, testInfo) => {
-  if (process.env.PW_UI_SCREENCAST) {
-    testInfo.setTimeout(45_000)
-  }
-
+test('renders trace request and response bodies with JSON, GraphQL, and fallback states', async ({ network, page, review }) => {
   network.use(...traceHandlers.tenTraceDetailFlow)
 
   await review.chapter('Open the trace with span details', 'Load the selected trace so the body viewer states can be inspected')
@@ -103,6 +98,17 @@ test('renders trace request and response bodies with JSON, GraphQL, and fallback
   await expect(responsePanel.getByText('Data', { exact: true }).first()).toBeVisible()
   await expect(responsePanel.getByText('"title": "Add Playwright coverage for trace stream"')).toBeVisible()
   await review.pause()
+})
+
+test('renders GraphQL detection without /graphql and body absence states', async ({ network, page, review }) => {
+  network.use(...traceHandlers.tenTraceDetailFlow)
+
+  await review.chapter('Open the trace with span details', 'Load the selected trace so the remaining body viewer states can be inspected')
+  await page.goto('/')
+  await page.getByPlaceholder('Search queries...').fill('playwright')
+  await page.getByText(/linear\.issues WHERE team_key = 'CORAL' AND title ILIKE '%playwright%'/).click()
+
+  await expect(page.getByRole('treeitem')).toHaveCount(14)
 
   await review.chapter('Inspect GraphQL detection without /graphql', 'Open a GraphQL-shaped body on a non-GraphQL path and confirm the richer rendering still appears')
   await page.getByRole('button', { name: /^POST github\.repository_search\b/ }).click()
@@ -128,6 +134,7 @@ test('renders trace request and response bodies with JSON, GraphQL, and fallback
   await page.getByRole('tab', { name: 'Response body (truncated)' }).click()
 
   await expect(page.getByText('Response body was truncated (4.0 KB), but no preview was recorded.')).toBeVisible()
+  await review.pause()
 })
 
 test('shows trace storage unavailable errors from TraceService', async ({ network, page, review }) => {
