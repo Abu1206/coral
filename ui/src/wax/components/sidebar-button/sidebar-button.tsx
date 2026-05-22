@@ -43,9 +43,10 @@ export function SidebarButton<T extends ElementType = 'button'>(props: Polymorph
   const Component = (as ?? 'button') as ElementType
   const isNativeButton = Component === 'button'
   const type = 'type' in props ? props.type! : 'button'
-  const fallbackAriaLabel = typeof children === 'string' ? children : undefined
-  const shouldUseFallbackAriaLabel = isMinimized && fallbackAriaLabel && !('aria-label' in rest)
-  const minimizedLabelProps = shouldUseFallbackAriaLabel ? { 'aria-label': fallbackAriaLabel } : {}
+  const childrenLabel = typeof children === 'string' ? children : undefined
+  const minimizedLabelProps = isMinimized && childrenLabel && rest['aria-label'] === undefined
+    ? { 'aria-label': childrenLabel }
+    : {}
 
   const componentProps = {
     className: classNames(
