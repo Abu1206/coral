@@ -5,7 +5,7 @@ import { customIcons, isCustomIcon } from '@/wax/components/icon/custom-icons/cu
 import { iconContainer } from '@/wax/components/icon.css'
 
 export type IconColor = 'disabled' | 'error' | 'info' | 'inherit' | 'orange' | 'placeholder' | 'primary' | 'secondary' | 'success' | 'tertiary' | 'warning'
-export type IconName = 'Activity' | 'ArrowDown' | 'ArrowUp' | 'ChevronDown' | 'ChevronLeft' | 'ChevronRight' | 'CircleAlert' | 'Coral' | 'Loader' | 'PanelLeft' | 'Search' | 'X'
+export type IconName = 'Activity' | 'ArrowDown' | 'ArrowUp' | 'ChevronDown' | 'ChevronRight' | 'CircleAlert' | 'Coral' | 'Loader' | 'PanelLeft' | 'Search' | 'X'
 export interface IconProps {
   className?: string
   color?: IconColor
