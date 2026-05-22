@@ -97,6 +97,10 @@ function formatRawValue(value: unknown, formatted: string): string {
   return typeof value === 'string' ? value : formatted
 }
 
+function hasBodyValue(value: JsonValue | undefined): boolean {
+  return value !== undefined && value !== null && value !== ''
+}
+
 interface GraphqlBodyPreview {
   bodyKind: BodyKind
   operationName?: string
@@ -193,7 +197,7 @@ function BodyViewer({
   emptyText: string
   kind: BodyKind
   rawValue: unknown
-  value: unknown
+  value: JsonValue | undefined
 }) {
   const preview = bodyPreview(kind, value, rawValue)
 
@@ -326,8 +330,8 @@ function preferredHttpDetailTab(
   requestBody: JsonValue | undefined,
   paramsValue: Record<string, string | string[]> | undefined,
 ): HttpDetailTab {
-  if (responseBody) return 'response'
-  if (requestBody) return 'request'
+  if (hasBodyValue(responseBody)) return 'response'
+  if (hasBodyValue(requestBody)) return 'request'
   if (paramsValue) return 'params'
   return 'response'
 }
