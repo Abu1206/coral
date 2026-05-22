@@ -1,11 +1,11 @@
 import classnames from 'classnames'
-import { Activity, Loader } from 'lucide-react'
+import { Activity, Loader, PanelLeft } from 'lucide-react'
 
 import { customIcons, isCustomIcon } from '@/wax/components/icon/custom-icons/custom-icons'
 import { iconContainer } from '@/wax/components/icon.css'
 
 export type IconColor = 'disabled' | 'error' | 'info' | 'inherit' | 'orange' | 'placeholder' | 'primary' | 'secondary' | 'success' | 'tertiary' | 'warning'
-export type IconName = 'Activity' | 'ArrowDown' | 'ArrowUp' | 'ChevronDown' | 'ChevronLeft' | 'ChevronRight' | 'CircleAlert' | 'Coral' | 'Loader' | 'Search' | 'X'
+export type IconName = 'Activity' | 'ArrowDown' | 'ArrowUp' | 'ChevronDown' | 'ChevronLeft' | 'ChevronRight' | 'CircleAlert' | 'Coral' | 'Loader' | 'PanelLeft' | 'Search' | 'X'
 export interface IconProps {
   className?: string
   color?: IconColor
@@ -17,6 +17,7 @@ export type IconSize = '14' | '16' | '18' | '20' | '24' | '30'
 const lucideIcons = {
   Activity,
   Loader,
+  PanelLeft,
 } as const
 
 export function Icon({ className, color = 'primary', name, size = '20' }: IconProps) {
