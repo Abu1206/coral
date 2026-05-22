@@ -457,8 +457,7 @@ export const externalCallTableName = style({ fontWeight: 500 })
 export const externalCallUrl = style({ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 export const externalCallMeta = style({ flexShrink: 0 })
 export const externalCallExpanded = style({ backgroundColor: theme.surface.onMainContentSubtle, borderBlockStart: `1px solid ${theme.stroke.primary}`, display: 'flex', flexDirection: 'column', gap: 8, paddingBlock: 8, paddingInline: 12 })
-export const methodBadge = style({ flexShrink: 0 })
-export const requestUrl = style({ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
+export const requestLine = style({ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 export const detailsSummary = style({ color: theme.content.tertiary, cursor: 'pointer' })
 export const detailsPre = style({
   backgroundColor: theme.surface.main,
